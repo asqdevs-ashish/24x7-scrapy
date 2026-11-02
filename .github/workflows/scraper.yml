@@ -88,3 +88,5 @@ jobs:
 
       - name: Run worker
         run: node src/index.js
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
