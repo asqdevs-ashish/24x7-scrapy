@@ -11,24 +11,22 @@ import type { DuplicateConflict } from '@/lib/types';
 export type DuplicateChoice = 'fresh' | 'skip';
 
 // Shown when POST /api/jobs answers 409: some location+category combinations
-// already have a job. Finished ones can be re-run ("fresh"); active ones
+// already have a job (one row per location × category pair). Finished ones can be re-run ("fresh"); active ones
 // (pending / running / paused) are always skipped.
 export function DuplicateJobDialog({
   conflict,
-  category,
   busy,
   onChoose,
   onCancel,
 }: {
   conflict: DuplicateConflict | null;
-  category: string;
   busy: DuplicateChoice | null;
   onChoose: (choice: DuplicateChoice) => void;
   onCancel: () => void;
 }) {
   const finished = conflict?.duplicates.filter((d) => !d.active) ?? [];
   const active = conflict?.duplicates.filter((d) => d.active) ?? [];
-  const newCount = conflict?.newLocations.length ?? 0;
+  const newCount = conflict?.newJobs.length ?? 0;
 
   return (
     <Modal
@@ -52,7 +50,8 @@ export function DuplicateJobDialog({
       {conflict && (
         <div className="space-y-4 p-5 sm:p-6">
           <p className="text-sm text-slate-400">
-            Category <span className="font-medium text-slate-200">“{category}”</span>
+            <span className="font-medium text-slate-200">{conflict.duplicates.length}</span> location × category
+            combination{conflict.duplicates.length > 1 ? 's' : ''} already scraped
           </p>
 
           <ul className="scrollbar-thin max-h-64 space-y-2 overflow-y-auto pr-1">
@@ -65,6 +64,7 @@ export function DuplicateJobDialog({
               >
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-medium text-slate-100">{d.location}</p>
+                  <p className="truncate text-xs text-neon-blue/90">{d.category}</p>
                   <p className="text-xs text-slate-500">
                     Job #{d.job_id} · {timeAgo(d.created_at)} · {formatNumber(d.leads)} leads
                     {d.active && <span className="text-amber-300/90"> · already in the queue, will be skipped</span>}
@@ -81,7 +81,7 @@ export function DuplicateJobDialog({
             {newCount > 0 && (
               <>
                 {' '}
-                <span className="font-medium text-slate-200">{newCount}</span> new location{newCount > 1 ? 's are' : ' is'}{' '}
+                <span className="font-medium text-slate-200">{newCount}</span> new job{newCount > 1 ? 's are' : ' is'}{' '}
                 queued either way.
               </>
             )}
@@ -113,7 +113,7 @@ export function DuplicateJobDialog({
           </div>
           {active.length > 0 && (
             <p className="text-xs text-slate-500">
-              {active.length} location{active.length > 1 ? 's are' : ' is'} still in the queue and won’t be duplicated — resume
+              {active.length} combination{active.length > 1 ? 's are' : ' is'} still in the queue and won’t be duplicated — resume
               or wait for {active.length > 1 ? 'those jobs' : 'that job'} instead.
             </p>
           )}

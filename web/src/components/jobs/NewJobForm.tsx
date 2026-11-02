@@ -1,8 +1,8 @@
 'use client';
 
 import { AnimatePresence, motion } from 'framer-motion';
-import { Infinity as InfinityIcon, MapPin, Plus, Rocket, Tag, Target, Zap } from 'lucide-react';
-import { useMemo, useState, type FormEvent } from 'react';
+import { Check, Infinity as InfinityIcon, MapPin, Plus, Rocket, Tag, Target, Zap } from 'lucide-react';
+import { useMemo, useState, type FormEvent, type KeyboardEvent } from 'react';
 import { DuplicateJobDialog, type DuplicateChoice } from '@/components/jobs/DuplicateJobDialog';
 import { useToast } from '@/components/providers/ToastProvider';
 import { Button } from '@/components/ui/Button';
@@ -22,6 +22,8 @@ const CATEGORY_SUGGESTIONS = [
 ];
 
 const MAX_LOCATIONS = 500;
+const MAX_CATEGORIES = 20;
+const MAX_JOBS = 500; // locations × categories, matches the API cap
 const MAX_TARGET = 10_000;
 const MAPS_LIST_LIMIT = 120;
 
@@ -29,7 +31,7 @@ type TargetMode = 'unlimited' | 'custom';
 
 interface JobPayload {
   location: string;
-  category: string;
+  categories: string[];
   target_leads: number | null;
   is_priority: boolean;
 }
@@ -53,10 +55,15 @@ function parseLocations(raw: string) {
   return { valid, tooShort };
 }
 
+const sameCategory = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
+
 export function NewJobForm({ onCreated }: { onCreated: () => void }) {
   const { toast } = useToast();
   const [location, setLocation] = useState('');
-  const [category, setCategory] = useState('real estate agency');
+  const [categories, setCategories] = useState<string[]>(['real estate agency']);
+  // Typed-in categories stay as chips (even when deselected) until the page reloads.
+  const [customCategories, setCustomCategories] = useState<string[]>([]);
+  const [categoryDraft, setCategoryDraft] = useState('');
   const [targetMode, setTargetMode] = useState<TargetMode>('unlimited');
   const [target, setTarget] = useState('50');
   const [priority, setPriority] = useState(false);
@@ -69,17 +76,30 @@ export function NewJobForm({ onCreated }: { onCreated: () => void }) {
 
   const locations = useMemo(() => parseLocations(location), [location]);
   const targetNumber = Number(target);
+  const draft = categoryDraft.trim().replace(/\s+/g, ' ');
+  const chips = [...CATEGORY_SUGGESTIONS, ...customCategories];
+  const isSelected = (c: string) => categories.some((x) => sameCategory(x, c));
+  const count = locations.valid.length;
+  const jobCount = count * categories.length;
 
   const locationError =
-    locations.valid.length === 0
+    count === 0
       ? 'Add at least one location.'
-      : locations.valid.length > MAX_LOCATIONS
-        ? `Maximum ${MAX_LOCATIONS} locations per batch (you have ${locations.valid.length}).`
+      : count > MAX_LOCATIONS
+        ? `Maximum ${MAX_LOCATIONS} locations per batch (you have ${count}).`
         : locations.tooShort
           ? `${locations.tooShort} line(s) are too short to be a location.`
           : null;
-  const categoryError =
-    category.trim().length < 2 ? 'Enter a Google Maps search term.' : category.trim().length > 100 ? 'Too long (max 100).' : null;
+  const draftError = draft && draft.length < 2 ? 'Too short.' : draft.length > 100 ? 'Too long (max 100).' : null;
+  const categoryErrorFor = (list: string[]) =>
+    list.length === 0
+      ? 'Pick at least one category.'
+      : list.length > MAX_CATEGORIES
+        ? `At most ${MAX_CATEGORIES} categories per batch.`
+        : count * list.length > MAX_JOBS
+          ? `At most ${MAX_JOBS} jobs per batch (${count} × ${list.length} = ${count * list.length}).`
+          : null;
+  const categoryError = draftError ?? categoryErrorFor(categories);
   const targetError =
     targetMode === 'unlimited'
       ? null
@@ -90,6 +110,29 @@ export function NewJobForm({ onCreated }: { onCreated: () => void }) {
           : null;
 
   const show = (field: keyof typeof touched, error: string | null) => ((touched[field] || submitted) && error) || null;
+
+  function toggleCategory(c: string) {
+    setTouched((t) => ({ ...t, category: true }));
+    setCategories((prev) => (prev.some((x) => sameCategory(x, c)) ? prev.filter((x) => !sameCategory(x, c)) : [...prev, c]));
+  }
+
+  // Selects the typed category (adding it as a chip if new). Returns the resulting selection.
+  function addDraftCategory(): string[] {
+    if (!draft || draftError) return categories;
+    const known = chips.find((c) => sameCategory(c, draft));
+    if (!known) setCustomCategories((prev) => [...prev, draft]);
+    const next = isSelected(draft) ? categories : [...categories, known ?? draft];
+    setCategories(next);
+    setCategoryDraft('');
+    return next;
+  }
+
+  function onDraftKeyDown(e: KeyboardEvent<HTMLInputElement>) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      addDraftCategory();
+    }
+  }
 
   function reportCreated(res: CreateJobsResponse, payload: JobPayload) {
     const n = res.created.length;
@@ -141,11 +184,13 @@ export function NewJobForm({ onCreated }: { onCreated: () => void }) {
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
     setSubmitted(true);
-    if (locationError || categoryError || targetError) return;
+    // A category still sitting in the input counts as selected.
+    const selected = addDraftCategory();
+    if (locationError || draftError || categoryErrorFor(selected) || targetError) return;
 
     const payload: JobPayload = {
       location: locations.valid.join('\n'),
-      category: category.trim(),
+      categories: selected,
       target_leads: targetMode === 'custom' ? targetNumber : null,
       is_priority: priority,
     };
@@ -177,12 +222,10 @@ export function NewJobForm({ onCreated }: { onCreated: () => void }) {
     }
   }
 
-  const count = locations.valid.length;
-
   return (
     <Card
       title="New scraping job"
-      subtitle="One location per line — each line becomes its own job."
+      subtitle="One location per line. Every location × category becomes its own job."
       icon={<Rocket className="size-5" />}
       delay={0.05}
     >
@@ -202,30 +245,63 @@ export function NewJobForm({ onCreated }: { onCreated: () => void }) {
           }
         />
 
+        {/* Categories (multi-select) */}
+        <div className="flex items-center justify-between gap-3 pb-1 pt-1">
+          <span className="flex items-center gap-2 text-sm font-medium text-slate-100">
+            <Tag className="size-4 text-neon-blue" />
+            Categories
+          </span>
+          <span className="flex items-center gap-2 text-xs text-slate-500">
+            {categories.length} selected
+            {categories.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setCategories([])}
+                className="rounded px-1 text-slate-400 transition-colors hover:text-white"
+              >
+                Clear
+              </button>
+            )}
+          </span>
+        </div>
+
+        <div className="flex flex-wrap gap-1.5 pb-2" role="group" aria-label="Categories">
+          {chips.map((c) => {
+            const active = isSelected(c);
+            return (
+              <Chip key={c} role="checkbox" active={active} onClick={() => toggleCategory(c)}>
+                {active && <Check className="size-3.5 text-neon-blue" />}
+                {c}
+              </Chip>
+            );
+          })}
+        </div>
+
         <FloatingInput
-          label="Category"
-          value={category}
-          icon={<Tag className="size-4" />}
-          onChange={(e) => setCategory(e.target.value)}
+          label="Add another category"
+          value={categoryDraft}
+          icon={<Plus className="size-4" />}
+          onChange={(e) => setCategoryDraft(e.target.value)}
+          onKeyDown={onDraftKeyDown}
           onBlur={() => setTouched((t) => ({ ...t, category: true }))}
           error={show('category', categoryError)}
-          maxLength={100}
+          hint="Type any Google Maps search term and press Enter, e.g. “plumber”."
+          maxLength={120}
+          trailing={
+            draft && !draftError ? (
+              <Button type="button" size="sm" variant="secondary" onClick={() => addDraftCategory()}>
+                Add
+              </Button>
+            ) : undefined
+          }
         />
-
-        <div className="-mt-1 flex flex-wrap gap-1.5 pb-3">
-          {CATEGORY_SUGGESTIONS.map((c) => (
-            <Chip key={c} active={category.trim().toLowerCase() === c} onClick={() => setCategory(c)}>
-              {c}
-            </Chip>
-          ))}
-        </div>
 
         {/* Target limit */}
         <div className="rounded-xl border border-white/[0.08] bg-obsidian-900/50 p-3.5">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <span className="flex items-center gap-2 text-sm font-medium text-slate-100">
               <Target className="size-4 text-neon-blue" />
-              Leads per location
+              Leads per job
             </span>
             <Segmented<TargetMode>
               layoutId="target-mode"
@@ -294,17 +370,24 @@ export function NewJobForm({ onCreated }: { onCreated: () => void }) {
         <div className="flex flex-wrap items-center justify-between gap-3 border-t border-white/[0.06] pt-4">
           <AnimatePresence mode="wait">
             <motion.p
-              key={`${count}-${priority}`}
+              key={`${count}-${categories.length}-${priority}`}
               initial={{ opacity: 0, y: 4 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -4 }}
               className="text-sm text-slate-400"
             >
-              {count ? (
+              {jobCount ? (
                 <>
-                  <span className="font-semibold text-white">{count}</span> job{count > 1 ? 's' : ''} will be queued
+                  {categories.length > 1 && (
+                    <span className="text-slate-500">
+                      {count} × {categories.length} ={' '}
+                    </span>
+                  )}
+                  <span className="font-semibold text-white">{jobCount}</span> job{jobCount > 1 ? 's' : ''} will be queued
                   {priority && <span className="text-amber-300"> first</span>}
                 </>
+              ) : count ? (
+                'No categories selected'
               ) : (
                 'No locations yet'
               )}
@@ -324,7 +407,6 @@ export function NewJobForm({ onCreated }: { onCreated: () => void }) {
 
       <DuplicateJobDialog
         conflict={conflict?.data ?? null}
-        category={conflict?.payload.category ?? ''}
         busy={resolving}
         onChoose={resolveConflict}
         onCancel={() => setConflict(null)}

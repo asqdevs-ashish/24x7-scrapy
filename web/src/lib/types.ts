@@ -28,6 +28,7 @@ export interface JobsResponse {
 // One location that already has a job for the requested category.
 export interface DuplicateJob {
   location: string;
+  category: string;
   job_id: number;
   status: JobStatus;
   created_at: string;
@@ -39,7 +40,12 @@ export interface DuplicateConflict {
   code: 'DUPLICATE';
   error: string;
   duplicates: DuplicateJob[];
-  newLocations: string[];
+  newJobs: JobPair[]; // location × category pairs with no job yet (queued either way)
+}
+
+export interface JobPair {
+  location: string;
+  category: string;
 }
 
 export interface TriggerInfo {
@@ -50,8 +56,8 @@ export interface TriggerInfo {
 
 export interface CreateJobsResponse {
   created: Pick<JobDTO, 'id' | 'location' | 'category' | 'status' | 'is_priority' | 'target_leads'>[];
-  skippedActive: string[];
-  skippedExisting: string[];
+  skippedActive: JobPair[];
+  skippedExisting: JobPair[];
   trigger: TriggerInfo | null;
 }
 
