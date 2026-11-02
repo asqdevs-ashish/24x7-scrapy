@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Maps feed fixture</title>
+<style>
+  body { margin: 0; font: 14px sans-serif; }
+  /* Like Google Maps: the feed is NOT the scrolling element; its parent is. */
+  #pane { position: fixed; inset: 0 auto 0 0; width: 400px; overflow-y: auto; }
+  .Nv2PK { height: 110px; border-bottom: 1px solid #ddd; padding: 8px; box-sizing: border-box; }
+  #loading { padding: 12px; color: #888; display: none; }
+</style>
+</head>
+<body>
+<div id="pane">
+  <div role="feed" id="feed"></div>
+  <div id="loading">Loading…</div>
+</div>
+<script>
+  // Query params: total, batch, delayMs, stallAt (stop loading, no end marker),
+  // slowAt / slowMs (one batch that loads slower than the worker's timeout).
+  const q = new URLSearchParams(location.search);
+  const total = Number(q.get('total') || 120);
+  const batch = Number(q.get('batch') || 20);
+  const delayMs = Number(q.get('delayMs') || 300);
+  const stallAt = Number(q.get('stallAt') || 0);
+  const slowAt = Number(q.get('slowAt') || -1);
+  const slowMs = Number(q.get('slowMs') || 0);
+
+  const pane = document.getElementById('pane');
+  const feed = document.getElementById('feed');
+  const loading = document.getElementById('loading');
+  let count = 0;
+  let busy = false;
+  let ended = false;
+  window.__loads = 0;
+
+  function addBatch() {
+    const n = Math.min(batch, total - count);
+    for (let i = 0; i < n; i++) {
+      count++;
+      const card = document.createElement('div');
+      card.className = 'Nv2PK';
+      card.innerHTML =
+        `<a aria-label="Agency ${count}" href="https://www.google.com/maps/place/Agency+${count}/data=!4m7!3m6!1s0x3bae:0x${count.toString(16)}!8m2!3d12.9!4d77.6"></a>` +
+        `<span role="img" aria-label="4.${count % 10} stars ${count * 3} Reviews"></span>Agency ${count}`;
+      feed.appendChild(card);
+    }
+    window.__loads++;
+    if (count >= total) {
+      ended = true;
+      const end = document.createElement('div');
+      end.innerHTML = `<span class="HlvSq">You've reached the end of the list.</span>`;
+      feed.appendChild(end);
+    }
+  }
+
+  function maybeLoad() {
+    if (busy || ended || (stallAt && count >= stallAt)) return;
+    if (pane.scrollTop + pane.clientHeight < pane.scrollHeight - 40) return;
+    busy = true;
+    loading.style.display = 'block';
+    setTimeout(() => {
+      addBatch();
+      busy = false;
+      loading.style.display = 'none';
+    }, count === slowAt ? slowMs : delayMs);
+  }
+
+  pane.addEventListener('scroll', maybeLoad, { passive: true });
+  addBatch(); // first page of results, like Maps
+</script>
+</body>
+</html>

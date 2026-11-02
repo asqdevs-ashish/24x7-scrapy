@@ -1,0 +1,81 @@
+// Single source of truth for the database. Migrations run from here.
+// The worker (worker/src/db.js) uses plain SQL against these table/column names,
+// so renaming a field here means updating db.js too.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  // Pooled Neon URL (host contains "-pooler") – used at runtime by Vercel.
+  url       = env("DATABASE_URL")
+  // Direct (unpooled) Neon URL – used by `prisma migrate`.
+  directUrl = env("DIRECT_URL")
+}
+
+enum JobStatus {
+  pending
+  running
+  paused
+  completed
+  failed
+}
+
+model ScrapingJob {
+  id          Int       @id @default(autoincrement())
+  location    String
+  category    String // Google Maps search term, e.g. "real estate agency"
+  status      JobStatus @default(pending)
+  created_at  DateTime  @default(now())
+
+  // Job control
+  target_leads     Int? // leads to save for this job; null = keep going until the end of the Maps list
+  is_priority      Boolean @default(false) // claimed before every normal job; triggers an immediate worker run
+  refresh_existing Boolean @default(false) // "extract fresh data anyway": re-open places already saved by other jobs and update them
+
+  // Worker bookkeeping
+  started_at  DateTime?
+  finished_at DateTime?
+  attempts    Int       @default(0)
+  error       String?
+  cards_seen  Int       @default(0)
+  leads_saved Int       @default(0)
+
+  leads RealtorLead[]
+
+  @@index([status, is_priority, created_at])
+  @@map("scraping_jobs")
+}
+
+model RealtorLead {
+  id              Int      @id @default(autoincrement())
+  business_name   String
+  category        String // mapped category, e.g. "Property Broker"
+  google_category String?
+  phone           String?  @unique // normalised "+91XXXXXXXXXX"
+  rating          Float? // null = place has no rating yet
+  reviews_count   Int      @default(0)
+  has_website     Boolean  @default(false)
+  website_url     String?
+  social_url      String? // Facebook / Instagram / JustDial etc. (not counted as website)
+  address         String?
+  latitude        Float?
+  longitude       Float?
+  place_key       String   @unique // Google Maps place id – dedupe key
+  maps_url        String?
+  search_location String?
+  created_at      DateTime @default(now())
+
+  job_id Int?
+  // Deleting a job deletes its leads.
+  job    ScrapingJob? @relation(fields: [job_id], references: [id], onDelete: Cascade)
+
+  @@index([rating])
+  @@index([reviews_count])
+  @@index([has_website])
+  @@index([category])
+  @@index([created_at])
+  @@index([job_id])
+  @@map("realtor_leads")
+}
